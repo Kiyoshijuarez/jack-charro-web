@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jack Charro | Control Bluetooth</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #111318;
+      color: #f7f0df;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      max-width: 760px;
+      margin: auto;
+    }
+
+    h1 { color: #f4c66a; margin-bottom: 6px; }
+    .sub { color: #b9beca; margin-top: 0; }
+
+    .panel {
+      background: #1c2029;
+      border: 1px solid #363c49;
+      border-radius: 16px;
+      padding: 18px;
+      margin: 16px 0;
+    }
+
+    .status { color: #f4c66a; margin: 12px 0; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 11px;
+      padding: 15px 10px;
+      min-height: 52px;
+      background: #303746;
+      color: white;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.primary { background: #bd8730; color: #17130c; }
+    button.stop { background: #8c3c43; }
+    button:active { transform: scale(.98); }
+
+    .wide { width: 100%; margin-bottom: 10px; }
+    #log { color: #c4c9d3; font-size: 13px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>🤠 Jack Charro</h1>
+  <p class="sub">Panel de control mediante Bluetooth BLE</p>
+
+  <section class="panel">
+    <h2>Conexión</h2>
+    <button id="connect" class="primary wide">Conectar con Jack</button>
+    <button id="disconnect" class="wide" disabled>Desconectar</button>
+    <div id="status" class="status">Desconectado</div>
+  </section>
+
+  <section class="panel">
+    <h2>Movimiento de cabeza</h2>
+    <div class="grid">
+      <button data-cmd="A" disabled>Cabeza: 0°</button>
+      <button data-cmd="B" disabled>Cabeza: 180°</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Movimiento de boca</h2>
+    <div class="grid">
+      <button data-cmd="C" disabled>Boca: 0°</button>
+      <button data-cmd="D" disabled>Boca: 180°</button>
+    </div>
+    <button data-cmd="E" class="wide" disabled>Centrar ambos servos (90°)</button>
+  </section>
+
+  <section class="panel">
+    <h2>Iluminación</h2>
+    <div class="grid">
+      <button data-cmd="O" disabled>💡 Encender luces</button>
+      <button data-cmd="o" disabled>Apagar luces</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Sonido</h2>
+    <div class="grid">
+      <button data-cmd="P" disabled>▶ Reproducir</button>
+      <button data-cmd="p" disabled>⏸ Pausar</button>
+    </div>
+    <button data-cmd="N" class="wide" disabled>⏭ Siguiente pista</button>
+  </section>
+
+  <section class="panel">
+    <h2>Registro</h2>
+    <div id="log">Esperando conexión…</div>
+  </section>
+</main>
+
+<script>
+  const SERVICE_UUID =
+    "8fafc201-1fb5-459e-8fcc-c5c9c331914b";
+
+  const CHARACTERISTIC_UUID =
+    "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+  let device = null;
+  let commandCharacteristic = null;
+
+  const status = document.getElementById("status");
+  const log = document.getElementById("log");
+  const connectButton = document.getElementById("connect");
+  const disconnectButton = document.getElementById("disconnect");
+  const commandButtons = [...document.querySelectorAll("[data-cmd]")];
+
+  function setConnected(connected) {
+    commandButtons.forEach(button => button.disabled = !connected);
+    disconnectButton.disabled = !connected;
+    connectButton.disabled = connected;
+    status.textContent = connected
+      ? "Conectado a JackCharro_BLE"
+      : "Desconectado";
+  }
+
+  function writeLog(message) {
+    log.textContent =
+      new Date().toLocaleTimeString() + " — " + message +
+      "\n" + log.textContent;
+  }
+
+  async function disconnect() {
+    if (device?.gatt?.connected) {
+      device.gatt.disconnect();
+    } else {
+      commandCharacteristic = null;
+      setConnected(false);
+    }
+  }
+
+  connectButton.addEventListener("click", async () => {
+    try {
+      if (!navigator.bluetooth) {
+        throw new Error(
+          "Este navegador no admite Web Bluetooth. Prueba Chrome o Edge en un origen HTTPS."
+        );
+      }
+
+      status.textContent = "Buscando ESP32…";
+
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: "JackCharro_BLE" }],
+        optionalServices: [SERVICE_UUID]
+      });
+
+      device.addEventListener("gattserverdisconnected", () => {
+        commandCharacteristic = null;
+        setConnected(false);
+        writeLog("Bluetooth desconectado.");
+      });
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+
+      commandCharacteristic =
+        await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+      setConnected(true);
+      writeLog("Conexión establecida con " + device.name);
+    } catch (error) {
+      setConnected(false);
+      status.textContent = "No se pudo conectar";
+      writeLog("Error: " + error.message);
+    }
+  });
+
+  disconnectButton.addEventListener("click", disconnect);
+
+  commandButtons.forEach(button => {
+    button.addEventListener("click", async () => {
+      if (!commandCharacteristic) return;
+
+      try {
+        const command = button.dataset.cmd;
+        const bytes = new TextEncoder().encode(command);
+
+        if (commandCharacteristic.properties.write) {
+          await commandCharacteristic.writeValueWithResponse(bytes);
+        } else {
+          await commandCharacteristic.writeValueWithoutResponse(bytes);
+        }
+
+        writeLog("Comando enviado: " + command);
+      } catch (error) {
+        writeLog("Error al enviar: " + error.message);
+      }
+    });
+  });
+
+  setConnected(false);
+</script>
+</body>
+</html>
